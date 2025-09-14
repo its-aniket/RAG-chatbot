@@ -3,7 +3,8 @@
 ## Overview
 The RAG (Retrieval-Augmented Generation) Chatbot is an advanced AI-powered chatbot application designed to provide accurate and interactive responses by leveraging multi-document search and large language models (LLMs). The project integrates a robust backend with a modern frontend to deliver a seamless user experience.
 
-<img width="1919" height="928" alt="image" src="https://github.com/user-attachments/assets/698a7916-fc2a-4d06-b0c4-a31f62f7d1c5" />
+<img width="1919" height="970" alt="image" src="https://github.com/user-attachments/assets/3394aa9f-94fd-4800-bdd0-b1d820007469" />
+
 
 ## Features
 - **Multi-document Search**: Extracts accurate responses from multiple documents.
