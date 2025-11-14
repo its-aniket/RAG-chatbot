@@ -12,7 +12,7 @@ The RAG (Retrieval-Augmented Generation) Chatbot is an advanced AI-powered chatb
 - **Advanced Citation Tools**: Includes collapsible sources, hover tooltips, and quality badges.
 - **Persistent Storage**: Prevents duplicate document processing and supports multiple chat sessions.
 - **Modern UI**: Built with React and Tailwind CSS, featuring hidden scrollbars for a clean look.
-- **ChromaDB Integration**: Optimized vector storage for efficient document retrieval.
+- **ChromaDB Integration**: Optimized user based vector storage for efficient document retrieval.
 
 ## Technologies Used
 ### Backend
