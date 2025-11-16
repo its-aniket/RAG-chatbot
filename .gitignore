@@ -57,3 +57,9 @@ coverage.xml
 
 # Tailwind CSS
 *.css.map
+
+# Firebase Admin SDK service account keys (NEVER commit these!)
+*firebase-adminsdk*.json
+ragchatbot-*-firebase-adminsdk-*.json
+backend/*firebase-adminsdk*.json
+.ragchatbot-fd942-firebase-adminsdk-fbsvc-0812081e57.json

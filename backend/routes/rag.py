@@ -5,10 +5,12 @@ import logging
 import uuid
 from pathlib import Path
 import json
+from datetime import datetime
 from sqlalchemy.orm import Session
 
 # Import database dependencies
 from database import get_db, DocumentService
+from auth.firebase_auth import require_auth
 
 # Import RAG pipeline components
 try:
@@ -87,7 +89,8 @@ async def get_rag_status():
 async def process_document_complete(
     file: UploadFile = File(...),
     document_id: Optional[str] = Form(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_auth)
 ):
     """
     Complete RAG processing: Upload → Process → Embed → Store
@@ -145,13 +148,15 @@ async def process_document_complete(
         
         # Step 3: Store in vector database with database tracking
         logger.info(f"Storing {embedded_count} embedded chunks")
+        user_id = current_user["uid"]
         storage_result = vector_store.store_embedded_chunks(
             embedded_chunks, 
             document_id=doc_id,
             filename=file.filename,
             file_content=content,
             file_size=file_size,
-            db=db
+            db=db,
+            user_id=user_id
         )
         
         # Clean up uploaded file
@@ -178,7 +183,10 @@ async def process_document_complete(
         )
 
 @router.post("/search", response_model=List[SearchResult])
-async def search_documents(query: SearchQuery):
+async def search_documents(
+    query: SearchQuery,
+    current_user: dict = Depends(require_auth)
+):
     """
     Search for similar chunks using semantic similarity
     Supports filtering by single document_id or multiple document_ids
@@ -199,14 +207,43 @@ async def search_documents(query: SearchQuery):
             # Use the single document ID for backward compatibility
             document_filter = query.document_id
         
-        # Perform search
+        # Add user_id filtering for data isolation
+        user_id = current_user["uid"]
+        
+        # For backward compatibility, also search legacy documents without user_id
+        # First try user-specific documents
+        user_filter = {"user_id": user_id}
+        
+        # Perform search with user filtering
         results = vector_store.search_by_query(
             query=query.query,
             embedder=embedder,
             top_k=query.top_k,
-            filter_criteria=None,  # Could be extended for additional filters
+            filter_criteria=user_filter,
             document_ids=document_filter
         )
+        
+        # STRICT MODE: If specific documents were selected, don't fall back to other documents
+        # Only fall back to legacy documents if NO document filter was specified
+        if not results and not document_filter:
+            try:
+                logger.info("No user documents found, searching legacy documents")
+                # Search documents that don't have user_id (legacy documents)
+                legacy_results = vector_store.search_by_query(
+                    query=query.query,
+                    embedder=embedder,
+                    top_k=query.top_k,
+                    filter_criteria=None,  # No user filter for legacy
+                    document_ids=None
+                )
+                # Filter out any results that do have user_id (keep only true legacy)
+                results = [r for r in legacy_results if not r.get('metadata', {}).get('user_id')]
+                logger.info(f"Found {len(results)} legacy document results")
+            except Exception as e:
+                logger.warning(f"Legacy document search failed: {e}")
+                results = []
+        elif document_filter and not results:
+            logger.info(f"No results found in selected documents: {document_filter}")
         
         # Format results
         search_results = []
@@ -228,7 +265,10 @@ async def search_documents(query: SearchQuery):
         )
 
 @router.post("/search-llm", response_model=LLMResponse)
-async def search_documents_with_llm(query: SearchQuery):
+async def search_documents_with_llm(
+    query: SearchQuery,
+    current_user: dict = Depends(require_auth)
+):
     """
     Search for similar chunks and generate AI response using LLM
     Supports filtering by single document_id or multiple document_ids
@@ -249,14 +289,50 @@ async def search_documents_with_llm(query: SearchQuery):
             # Use the single document ID for backward compatibility
             document_filter = query.document_id
         
+        # Add user_id filtering for data isolation
+        user_id = current_user["uid"]
+        user_filter = {"user_id": user_id}
+        
         # Perform vector search to get relevant chunks
         results = vector_store.search_by_query(
             query=query.query,
             embedder=embedder,
             top_k=query.top_k,
-            filter_criteria=None,  # Could be extended for additional filters
+            filter_criteria=user_filter,
             document_ids=document_filter
         )
+        
+        # STRICT MODE: If specific documents were selected, don't fall back to other documents
+        # Only fall back to legacy documents if NO document filter was specified
+        if not results and not document_filter:
+            try:
+                logger.info("No user documents found for LLM search, trying legacy documents")
+                legacy_results = vector_store.search_by_query(
+                    query=query.query,
+                    embedder=embedder,
+                    top_k=query.top_k,
+                    filter_criteria=None,
+                    document_ids=None
+                )
+                results = [r for r in legacy_results if not r.get('metadata', {}).get('user_id')]
+                logger.info(f"Found {len(results)} legacy document results for LLM")
+            except Exception as e:
+                logger.warning(f"Legacy document search failed: {e}")
+        elif document_filter and not results:
+            logger.info(f"No results found in selected documents for LLM: {document_filter}")
+        
+        # If still no results and specific documents were selected, provide helpful message
+        if not results and document_filter:
+            logger.warning(f"No relevant content found in selected documents: {document_filter}")
+            # Generate a response indicating that the selected documents don't contain relevant information
+            return LLMResponse(
+                response="I couldn't find any relevant information in the selected documents to answer your question. The documents you've chosen may not contain content related to your query. You could try selecting different documents or asking a different question.",
+                sources=[],
+                model_used="system_fallback",
+                timestamp=datetime.now().isoformat(),
+                token_usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                query=query.query
+            )
         
         # Generate AI response using LLM
         llm_response = llm_generator.generate_response(
@@ -270,7 +346,7 @@ async def search_documents_with_llm(query: SearchQuery):
             model_used=llm_response["model_used"],
             timestamp=llm_response["timestamp"],
             token_usage=llm_response["token_usage"],
-            query=llm_response["query"]
+            query=llm_response.get("query", query.query)  # Fallback to original query
         )
         
     except Exception as e:
@@ -307,7 +383,10 @@ async def get_document_chunks(document_id: str):
         )
 
 @router.delete("/documents/{document_id}")
-async def delete_document_from_storage(document_id: str):
+async def delete_document_from_storage(
+    document_id: str,
+    current_user: dict = Depends(require_auth)
+):
     """
     Delete document and all its chunks from vector storage
     """
@@ -318,7 +397,8 @@ async def delete_document_from_storage(document_id: str):
         )
     
     try:
-        result = vector_store.delete_document(document_id)
+        user_id = current_user["uid"]
+        result = vector_store.delete_document(document_id, user_id)
         
         if result["status"] == "error":
             raise HTTPException(status_code=500, detail=result["message"])
@@ -368,9 +448,9 @@ async def get_collection_statistics():
         )
 
 @router.delete("/collection/clear")
-async def clear_collection():
+async def clear_collection(current_user: dict = Depends(require_auth)):
     """
-    Clear all documents from the vector collection
+    Clear all documents from the vector collection for the current user
     """
     if not vector_store:
         raise HTTPException(
@@ -379,7 +459,26 @@ async def clear_collection():
         )
     
     try:
-        result = vector_store.clear_collection()
+        user_id = current_user["uid"]
+        
+        # Get all user documents first
+        collection = vector_store.collection
+        user_docs = collection.get(
+            where={"user_id": user_id},
+            include=["metadatas"]
+        )
+        
+        if not user_docs["ids"]:
+            return {"message": "No documents found for user", "deleted_count": 0}
+        
+        # Delete user documents
+        collection.delete(ids=user_docs["ids"])
+        
+        result = {
+            "status": "success",
+            "message": f"Cleared {len(user_docs['ids'])} chunks for user",
+            "deleted_count": len(user_docs["ids"])
+        }
         
         if result["status"] == "error":
             raise HTTPException(status_code=500, detail=result["message"])

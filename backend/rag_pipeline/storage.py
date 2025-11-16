@@ -104,7 +104,8 @@ class VectorStore:
         filename: Optional[str] = None,
         file_content: Optional[bytes] = None,
         file_size: Optional[int] = None,
-        db: Optional[Session] = None
+        db: Optional[Session] = None,
+        user_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Store embedded chunks in ChromaDB with FAISS indexing and database tracking
@@ -166,6 +167,10 @@ class VectorStore:
                 metadata["document_id"] = document_id or metadata.get("document_id", "unknown")
                 metadata["stored_at"] = datetime.now().isoformat()
                 metadata["storage_status"] = "stored"
+                
+                # Add user_id for data isolation
+                if user_id:
+                    metadata["user_id"] = user_id
                 
                 # Remove embedding from metadata to avoid duplication
                 if "embedding" in metadata:
@@ -237,7 +242,7 @@ class VectorStore:
                 try:
                     file_hash = DocumentService.calculate_file_hash(file_content)
                     DocumentService.mark_document_processed(
-                        db_session, filename, file_hash, file_size, valid_chunks
+                        db_session, filename, file_hash, file_size, valid_chunks, document_id, user_id
                     )
                     logger.info(f"Document '{filename}' marked as processed in database")
                 except Exception as db_error:
@@ -253,7 +258,7 @@ class VectorStore:
             if should_track_in_db and db_session:
                 try:
                     file_hash = DocumentService.calculate_file_hash(file_content)
-                    DocumentService.mark_document_failed(db_session, filename, file_hash, file_size)
+                    DocumentService.mark_document_failed(db_session, filename, file_hash, file_size, document_id)
                     logger.info(f"Document '{filename}' marked as failed in database")
                 except Exception as db_error:
                     logger.warning(f"Failed to mark document as failed in database: {str(db_error)}")
@@ -301,22 +306,34 @@ class VectorStore:
                 query_embedding = query_embedding.tolist()
             
             # Prepare final filter criteria
-            final_filter = filter_criteria.copy() if filter_criteria else None
+            final_filter = None
             
             # Handle document ID filtering
             if document_ids:
                 if isinstance(document_ids, str):
                     # Single document ID
-                    if final_filter is None:
-                        final_filter = {}
-                    final_filter["document_id"] = document_ids
+                    doc_filter = {"document_id": document_ids}
                 elif isinstance(document_ids, list) and len(document_ids) > 0:
                     # Multiple document IDs - use ChromaDB's $in operator
-                    if final_filter is None:
-                        final_filter = {}
-                    final_filter["document_id"] = {"$in": document_ids}
+                    doc_filter = {"document_id": {"$in": document_ids}}
                 else:
                     logger.warning("Invalid document_ids provided, ignoring filter")
+                    doc_filter = None
+                
+                # Combine with other filter criteria using $and
+                if filter_criteria and doc_filter:
+                    final_filter = {
+                        "$and": [
+                            filter_criteria,
+                            doc_filter
+                        ]
+                    }
+                elif filter_criteria:
+                    final_filter = filter_criteria
+                elif doc_filter:
+                    final_filter = doc_filter
+            else:
+                final_filter = filter_criteria
             
             # Perform similarity search
             # Only pass 'where' parameter if we have actual filters
@@ -426,20 +443,25 @@ class VectorStore:
             logger.error(f"Failed to retrieve document chunks: {str(e)}")
             return []
 
-    def delete_document(self, document_id: str) -> Dict[str, Any]:
+    def delete_document(self, document_id: str, user_id: str = None) -> Dict[str, Any]:
         """
         Delete all chunks for a specific document
         
         Args:
             document_id: Document identifier
+            user_id: User identifier for access control (optional)
             
         Returns:
             Deletion result
         """
         try:
-            # Get chunks to delete
+            # Get chunks to delete with user filtering
+            where_filter = {"document_id": document_id}
+            if user_id:
+                where_filter["user_id"] = user_id
+                
             chunks_to_delete = self.collection.get(
-                where={"document_id": document_id},
+                where=where_filter,
                 include=["metadatas"]
             )
             

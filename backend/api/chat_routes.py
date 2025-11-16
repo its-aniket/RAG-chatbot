@@ -9,6 +9,7 @@ from datetime import datetime
 
 from database import get_db, ChatService
 from database.models import ChatSession, ChatMessage
+from auth.firebase_auth import require_auth
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -44,11 +45,13 @@ class ChatHistoryResponse(BaseModel):
 @router.post("/sessions", response_model=ChatSessionResponse)
 async def create_chat_session(
     session_data: ChatSessionCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_auth)
 ):
     """Create a new chat session"""
     try:
-        session = ChatService.create_chat_session(db, session_data.title)
+        user_id = current_user["uid"]
+        session = ChatService.create_chat_session(db, session_data.title, user_id)
         return ChatSessionResponse(
             session_id=session.session_id,
             title=session.title,
@@ -61,10 +64,14 @@ async def create_chat_session(
         raise HTTPException(status_code=500, detail=f"Failed to create chat session: {str(e)}")
 
 @router.get("/sessions", response_model=List[ChatSessionResponse])
-async def get_chat_sessions(db: Session = Depends(get_db)):
+async def get_chat_sessions(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_auth)
+):
     """Get all active chat sessions"""
     try:
-        sessions = ChatService.get_all_chat_sessions(db)
+        user_id = current_user["uid"]
+        sessions = ChatService.get_all_chat_sessions(db, user_id)
         return [
             ChatSessionResponse(
                 session_id=session.session_id,
@@ -82,11 +89,13 @@ async def get_chat_sessions(db: Session = Depends(get_db)):
 @router.get("/sessions/{session_id}", response_model=ChatHistoryResponse)
 async def get_chat_history(
     session_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_auth)
 ):
     """Get chat history for a specific session"""
     try:
-        session = ChatService.get_chat_session(db, session_id)
+        user_id = current_user["uid"]
+        session = ChatService.get_chat_session(db, session_id, user_id)
         if not session:
             raise HTTPException(status_code=404, detail="Chat session not found")
         
@@ -116,12 +125,14 @@ async def get_chat_history(
 async def add_message(
     session_id: str,
     message_data: MessageCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_auth)
 ):
     """Add a message to a chat session"""
     try:
+        user_id = current_user["uid"]
         # Check if session exists
-        session = ChatService.get_chat_session(db, session_id)
+        session = ChatService.get_chat_session(db, session_id, user_id)
         if not session:
             raise HTTPException(status_code=404, detail="Chat session not found")
         
@@ -150,7 +161,8 @@ async def add_message(
 async def update_session_title(
     session_id: str,
     title_data: dict,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_auth)
 ):
     """Update chat session title"""
     try:
@@ -158,9 +170,10 @@ async def update_session_title(
         if not title:
             raise HTTPException(status_code=400, detail="Title cannot be empty")
         
-        session = ChatService.update_session_title(db, session_id, title)
+        user_id = current_user["uid"]
+        session = ChatService.update_session_title(db, session_id, title, user_id)
         if not session:
-            raise HTTPException(status_code=404, detail="Chat session not found")
+            raise HTTPException(status_code=404, detail="Chat session not found or you don't have permission")
         
         return {"message": "Session title updated successfully", "title": session.title}
     except HTTPException:
@@ -171,13 +184,15 @@ async def update_session_title(
 @router.delete("/sessions/{session_id}")
 async def delete_chat_session(
     session_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_auth)
 ):
     """Delete a chat session (soft delete)"""
     try:
-        success = ChatService.delete_chat_session(db, session_id)
+        user_id = current_user["uid"]
+        success = ChatService.delete_chat_session(db, session_id, user_id)
         if not success:
-            raise HTTPException(status_code=404, detail="Chat session not found")
+            raise HTTPException(status_code=404, detail="Chat session not found or you don't have permission")
         
         return {"message": "Chat session deleted successfully"}
     except HTTPException:
@@ -188,11 +203,13 @@ async def delete_chat_session(
 @router.get("/sessions/{session_id}/export")
 async def export_chat_session(
     session_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_auth)
 ):
     """Export chat session as JSON"""
     try:
-        session = ChatService.get_chat_session(db, session_id)
+        user_id = current_user["uid"]
+        session = ChatService.get_chat_session(db, session_id, user_id)
         if not session:
             raise HTTPException(status_code=404, detail="Chat session not found")
         

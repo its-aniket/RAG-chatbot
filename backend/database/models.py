@@ -14,8 +14,10 @@ class ProcessedDocument(Base):
     __tablename__ = "processed_documents"
     
     id = Column(Integer, primary_key=True, index=True)
-    filename = Column(String, unique=True, index=True, nullable=False)
-    file_hash = Column(String, unique=True, index=True, nullable=False)  # Hash of file content
+    user_id = Column(String, index=True, nullable=True)  # Firebase user ID
+    document_id = Column(String, unique=True, index=True, nullable=True)  # UUID from RAG pipeline
+    filename = Column(String, index=True, nullable=False)  # Remove unique constraint as same file can be processed multiple times
+    file_hash = Column(String, index=True, nullable=False)  # Hash of file content
     file_size = Column(Integer, nullable=False)
     upload_date = Column(DateTime, default=datetime.utcnow)
     processed_date = Column(DateTime, default=datetime.utcnow)
@@ -30,6 +32,7 @@ class ChatSession(Base):
     __tablename__ = "chat_sessions"
     
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True, nullable=True)  # Firebase user ID
     session_id = Column(String, unique=True, index=True, default=lambda: str(uuid.uuid4()))
     title = Column(String, nullable=False, default="New Chat")
     created_at = Column(DateTime, default=datetime.utcnow)

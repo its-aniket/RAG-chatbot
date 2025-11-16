@@ -32,10 +32,14 @@ class DocumentService:
         filename: str, 
         file_hash: str, 
         file_size: int, 
-        chunk_count: int = 0
+        chunk_count: int = 0,
+        document_id: str = None,
+        user_id: str = None
     ) -> ProcessedDocument:
         """Mark document as processed"""
         document = ProcessedDocument(
+            user_id=user_id,
+            document_id=document_id,
             filename=filename,
             file_hash=file_hash,
             file_size=file_size,
@@ -48,16 +52,58 @@ class DocumentService:
         return document
     
     @staticmethod
-    def get_processed_documents(db: Session) -> List[ProcessedDocument]:
-        """Get all processed documents"""
-        return db.query(ProcessedDocument).filter(
+    def get_processed_documents(db: Session, user_id: str = None) -> List[ProcessedDocument]:
+        """Get all processed documents, optionally filtered by user"""
+        query = db.query(ProcessedDocument).filter(
             ProcessedDocument.status == "processed"
-        ).all()
+        )
+        
+        if user_id:
+            query = query.filter(ProcessedDocument.user_id == user_id)
+        
+        return query.all()
     
     @staticmethod
-    def mark_document_failed(db: Session, filename: str, file_hash: str, file_size: int):
+    def get_document_by_id(db: Session, document_id: str, user_id: str = None) -> Optional[ProcessedDocument]:
+        """Get a specific document by document_id, optionally filtered by user"""
+        query = db.query(ProcessedDocument).filter(
+            ProcessedDocument.document_id == document_id
+        )
+        
+        if user_id:
+            query = query.filter(ProcessedDocument.user_id == user_id)
+        
+        return query.first()
+    
+    @staticmethod
+    def delete_document(db: Session, document_id: str, user_id: str = None) -> bool:
+        """Delete a document from the database"""
+        try:
+            query = db.query(ProcessedDocument).filter(
+                ProcessedDocument.document_id == document_id
+            )
+            
+            if user_id:
+                query = query.filter(ProcessedDocument.user_id == user_id)
+            
+            document = query.first()
+            
+            if document:
+                db.delete(document)
+                db.commit()
+                return True
+            return False
+        except Exception as e:
+            db.rollback()
+            print(f"Database deletion error: {e}")
+            return False
+    
+    @staticmethod
+    def mark_document_failed(db: Session, filename: str, file_hash: str, file_size: int, document_id: str = None, user_id: str = None):
         """Mark document processing as failed"""
         document = ProcessedDocument(
+            user_id=user_id,
+            document_id=document_id,
             filename=filename,
             file_hash=file_hash,
             file_size=file_size,
@@ -70,35 +116,51 @@ class ChatService:
     """Service for managing chat sessions and messages"""
     
     @staticmethod
-    def create_chat_session(db: Session, title: str = "New Chat") -> ChatSession:
+    def create_chat_session(db: Session, title: str = "New Chat", user_id: str = None) -> ChatSession:
         """Create a new chat session"""
-        session = ChatSession(title=title)
+        session = ChatSession(title=title, user_id=user_id)
         db.add(session)
         db.commit()
         db.refresh(session)
         return session
     
     @staticmethod
-    def get_chat_session(db: Session, session_id: str) -> Optional[ChatSession]:
+    def get_chat_session(db: Session, session_id: str, user_id: str = None) -> Optional[ChatSession]:
         """Get chat session by ID"""
-        return db.query(ChatSession).filter(
+        query = db.query(ChatSession).filter(
             ChatSession.session_id == session_id,
             ChatSession.is_active == True
-        ).first()
+        )
+        
+        if user_id:
+            query = query.filter(ChatSession.user_id == user_id)
+            
+        return query.first()
     
     @staticmethod
-    def get_all_chat_sessions(db: Session) -> List[ChatSession]:
+    def get_all_chat_sessions(db: Session, user_id: str = None) -> List[ChatSession]:
         """Get all active chat sessions"""
-        return db.query(ChatSession).filter(
+        query = db.query(ChatSession).filter(
             ChatSession.is_active == True
-        ).order_by(ChatSession.updated_at.desc()).all()
+        )
+        
+        if user_id:
+            query = query.filter(ChatSession.user_id == user_id)
+            
+        return query.order_by(ChatSession.updated_at.desc()).all()
     
     @staticmethod
-    def update_session_title(db: Session, session_id: str, title: str) -> Optional[ChatSession]:
-        """Update chat session title"""
-        session = db.query(ChatSession).filter(
+    def update_session_title(db: Session, session_id: str, title: str, user_id: str = None) -> Optional[ChatSession]:
+        """Update chat session title with user ownership validation"""
+        query = db.query(ChatSession).filter(
             ChatSession.session_id == session_id
-        ).first()
+        )
+        
+        # Add user ownership validation
+        if user_id:
+            query = query.filter(ChatSession.user_id == user_id)
+            
+        session = query.first()
         if session:
             session.title = title
             session.updated_at = datetime.utcnow()
@@ -107,11 +169,17 @@ class ChatService:
         return session
     
     @staticmethod
-    def delete_chat_session(db: Session, session_id: str) -> bool:
-        """Delete chat session (soft delete)"""
-        session = db.query(ChatSession).filter(
+    def delete_chat_session(db: Session, session_id: str, user_id: str = None) -> bool:
+        """Delete chat session (soft delete) with user ownership validation"""
+        query = db.query(ChatSession).filter(
             ChatSession.session_id == session_id
-        ).first()
+        )
+        
+        # Add user ownership validation
+        if user_id:
+            query = query.filter(ChatSession.user_id == user_id)
+            
+        session = query.first()
         if session:
             session.is_active = False
             db.commit()
