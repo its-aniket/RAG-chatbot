@@ -1,10 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from fastapi.responses import JSONResponse
-import os
-import uuid
 from pathlib import Path
-import PyPDF2
-from io import BytesIO
 from sqlalchemy.orm import Session
 
 # Import database dependencies

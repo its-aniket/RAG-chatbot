@@ -1,9 +1,20 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from datetime import datetime
 import uvicorn
 import os
+from pathlib import Path
+from datetime import datetime
+
+# Configure paths for different environments
+BASE_DIR = Path(__file__).parent
+UPLOADS_DIR = BASE_DIR / "uploads"
+CHROMA_DIR = BASE_DIR / "chroma_db"
+CHROMA_USERS_DIR = BASE_DIR / "chroma_db_users"
+
+# Ensure directories exist
+UPLOADS_DIR.mkdir(exist_ok=True)
+CHROMA_DIR.mkdir(exist_ok=True)
+CHROMA_USERS_DIR.mkdir(exist_ok=True)
 
 # Import authentication and security
 try:
@@ -45,19 +56,35 @@ async def startup_event():
 allowed_origins = [
     "http://localhost:3000",  # React dev server
     "http://127.0.0.1:3000", # Alternative localhost
+    "https://*.devtunnels.ms", # VS Code Dev Tunnels
+    "https://*.gitpod.io",    # Gitpod
+    "https://*.codespaces.githubusercontent.com", # GitHub Codespaces
 ]
 
 # Add production origin if configured
 if os.getenv("FRONTEND_URL"):
     allowed_origins.append(os.getenv("FRONTEND_URL"))
 
+# For development, allow all origins with devtunnels pattern
+if os.getenv("NODE_ENV") != "production":
+    allowed_origins.append("https://*.inc1.devtunnels.ms")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=["*"] if os.getenv("NODE_ENV") != "production" else allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# Add middleware to log CORS requests for debugging
+@app.middleware("http")
+async def cors_debug_middleware(request, call_next):
+    origin = request.headers.get("origin")
+    if origin:
+        print(f"CORS Request from origin: {origin}")
+    response = await call_next(request)
+    return response
 
 # Add security middleware
 if security_available:
@@ -75,56 +102,26 @@ app.include_router(chat_router)
 if rag_available and rag_router:
     app.include_router(rag_router)
 
-# Pydantic models for request/response
-class ChatRequest(BaseModel):
-    message: str
-
-class ChatResponse(BaseModel):
-    message: str
-    timestamp: str
-
-class HealthResponse(BaseModel):
-    status: str
-    service: str
-
 @app.get("/")
 async def home():
     return {"message": "RAG Chatbot Backend API is running!"}
 
-@app.get("/health", response_model=HealthResponse)
+@app.get("/health")
 async def health_check():
-    return HealthResponse(status="healthy", service="rag-chatbot-backend")
+    """Health check endpoint with CORS info"""
+    return {
+        "status": "healthy",
+        "cors_enabled": True,
+        "allowed_origins": allowed_origins if os.getenv("NODE_ENV") == "production" else ["*"],
+        "timestamp": datetime.now().isoformat()
+    }
 
-@app.get("/auth/status")
-async def auth_status():
-    """Get authentication system status"""
-    if security_available:
-        return {
-            "authentication": "enabled",
-            "firebase_status": firebase_auth.get_status()
-        }
-    else:
-        return {
-            "authentication": "disabled",
-            "message": "Install firebase-admin to enable authentication"
-        }
-
-@app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    try:
-        if not request.message.strip():
-            raise HTTPException(status_code=400, detail="Message is required")
-        
-        # Placeholder response - will be replaced with actual RAG implementation
-        response = ChatResponse(
-            message=f"Echo: {request.message}",
-            timestamp=datetime.now().isoformat()
-        )
-        
-        return response
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+if __name__ == "__main__":
+    # Configuration for development
+    uvicorn.run(
+        "app:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )
